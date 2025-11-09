@@ -2,17 +2,19 @@
 import express from "express";
 import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
 import cors from "cors";
+import dotenv from "dotenv";
+
+dotenv.config(); // .env file থেকে credentials নেওয়া হচ্ছে
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
 // MongoDB URI
-const uri =
-  "mongodb+srv://Assignment-10-db:AiVwsq2RzArzW6ek@cluster0.o1btdpz.mongodb.net/?appName=Cluster0";
+const uri = process.env.MONGO_URI;
 
 // MongoDB Client
 const client = new MongoClient(uri, {
@@ -27,19 +29,22 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     await client.connect();
-    console.log("MongoDB connected successfully!");
+    console.log("✅ MongoDB connected successfully!");
   } catch (err) {
-    console.error(err);
+    console.error("❌ MongoDB connection failed:", err);
   }
 }
 run().catch(console.dir);
 
-// Database & Collection
+// Database & Collections
 const db = client.db("Assignment-10-db");
 const modelsCollection = db.collection("models");
+const purchasesCollection = db.collection("purchases");
 
-// Routes
-app.get("/", (req, res) => res.send("Backend is running..."));
+// ------------------------ ROUTES ------------------------ //
+
+// Root
+app.get("/", (req, res) => res.send("🚀 Backend is running..."));
 
 // Add new model
 app.post("/models", async (req, res) => {
@@ -47,7 +52,6 @@ app.post("/models", async (req, res) => {
     const model = req.body;
     model.createdAt = new Date();
     model.purchased = 0;
-
     const result = await modelsCollection.insertOne(model);
     res.status(201).json({ success: true, data: result });
   } catch (err) {
@@ -82,7 +86,7 @@ app.get("/models/latest", async (req, res) => {
   }
 });
 
-// Get model by ID
+// Get single model by ID
 app.get("/models/:id", async (req, res) => {
   try {
     const id = req.params.id;
@@ -95,21 +99,8 @@ app.get("/models/:id", async (req, res) => {
     res.status(500).json({ success: false, message: "Server Error" });
   }
 });
-// Add this route in index.js
-app.post("/purchases", async (req, res) => {
-  try {
-    const purchase = req.body;
-    const purchasesCollection = db.collection("purchases");
-    const result = await purchasesCollection.insertOne(purchase);
-    res.json({ success: true, data: result });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server Error" });
-  }
-});
 
-
-// Update model by ID
+// Update model
 app.put("/models/:id", async (req, res) => {
   try {
     const id = req.params.id;
@@ -122,11 +113,24 @@ app.put("/models/:id", async (req, res) => {
   }
 });
 
-// Delete model by ID
+// Delete model
 app.delete("/models/:id", async (req, res) => {
   try {
     const id = req.params.id;
     const result = await modelsCollection.deleteOne({ _id: new ObjectId(id) });
+    res.json({ success: true, data: result });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+});
+
+// Add new purchase
+app.post("/purchases", async (req, res) => {
+  try {
+    const purchase = req.body; // { modelId, userEmail }
+    purchase.purchasedAt = new Date();
+    const result = await purchasesCollection.insertOne(purchase);
     res.json({ success: true, data: result });
   } catch (err) {
     console.error(err);
@@ -149,7 +153,9 @@ app.post("/models/:id/purchase", async (req, res) => {
   }
 });
 
+// -------------------------------------------------------- //
+
 // Start server
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
