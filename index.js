@@ -1,57 +1,53 @@
-// index.js
+// server.js
 import express from "express";
 import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
 import cors from "cors";
 import dotenv from "dotenv";
 
-dotenv.config(); // .env file থেকে credentials নেওয়া হচ্ছে
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// MongoDB URI
 const uri = process.env.MONGO_URI;
-
-// MongoDB Client
 const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  },
+  serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true },
 });
 
 // Connect to MongoDB
 async function run() {
   try {
     await client.connect();
-    console.log("✅ MongoDB connected successfully!");
+    console.log("✅ MongoDB connected!");
   } catch (err) {
     console.error("❌ MongoDB connection failed:", err);
   }
 }
 run().catch(console.dir);
 
-// Database & Collections
 const db = client.db("Assignment-10-db");
 const modelsCollection = db.collection("models");
 const purchasesCollection = db.collection("purchases");
 
-// ------------------------ ROUTES ------------------------ //
+// ---------------- Routes ---------------- //
 
 // Root
-app.get("/", (req, res) => res.send("🚀 Backend is running..."));
+app.get("/", (req, res) => res.send("🚀 Backend running..."));
 
-// Add new model
+// Add Model
 app.post("/models", async (req, res) => {
   try {
     const model = req.body;
     model.createdAt = new Date();
     model.purchased = 0;
+    model.createdBy = model.createdBy || "unknown@example.com";
+    model.ownerEmail = model.createdBy;
+    model.description = model.description || "No description available";
+    model.image = model.image || "https://via.placeholder.com/300x200?text=No+Image";
+
     const result = await modelsCollection.insertOne(model);
     res.status(201).json({ success: true, data: result });
   } catch (err) {
@@ -60,10 +56,12 @@ app.post("/models", async (req, res) => {
   }
 });
 
-// Get all models
+// Get all models (optionally filter by user)
 app.get("/models", async (req, res) => {
   try {
-    const models = await modelsCollection.find({}).toArray();
+    const email = req.query.email;
+    const query = email ? { createdBy: email } : {};
+    const models = await modelsCollection.find(query).toArray();
     res.json({ success: true, data: models });
   } catch (err) {
     console.error(err);
@@ -86,13 +84,12 @@ app.get("/models/latest", async (req, res) => {
   }
 });
 
-// Get single model by ID
+// Get model by ID
 app.get("/models/:id", async (req, res) => {
   try {
     const id = req.params.id;
     const model = await modelsCollection.findOne({ _id: new ObjectId(id) });
-    if (!model)
-      return res.status(404).json({ success: false, message: "Model not found" });
+    if (!model) return res.status(404).json({ success: false, message: "Model not found" });
     res.json({ success: true, data: model });
   } catch (err) {
     console.error(err);
@@ -125,10 +122,10 @@ app.delete("/models/:id", async (req, res) => {
   }
 });
 
-// Add new purchase
+// Add a purchase
 app.post("/purchases", async (req, res) => {
   try {
-    const purchase = req.body; // { modelId, userEmail }
+    const purchase = req.body;
     purchase.purchasedAt = new Date();
     const result = await purchasesCollection.insertOne(purchase);
     res.json({ success: true, data: result });
@@ -153,9 +150,56 @@ app.post("/models/:id/purchase", async (req, res) => {
   }
 });
 
-// -------------------------------------------------------- //
+// Get purchases for a specific user with model details
+app.get("/purchases", async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ success: false, message: "Email is required" });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+    const purchases = await purchasesCollection
+      .aggregate([
+        { $match: { userEmail: email } },
+        {
+          $lookup: {
+            from: "models",
+            let: { modelIdStr: "$modelId" },
+            pipeline: [
+              {
+                $match: { $expr: { $eq: ["$_id", { $toObjectId: "$$modelIdStr" }] } }
+              }
+            ],
+            as: "modelInfo"
+          }
+        },
+        { $unwind: "$modelInfo" },
+        {
+          $project: {
+            _id: 1,
+            modelId: 1,
+            userEmail: 1,
+            purchasedAt: 1,
+            modelDetails: {
+              _id: "$modelInfo._id",
+              name: "$modelInfo.name",
+              framework: "$modelInfo.framework",
+              useCase: "$modelInfo.useCase",
+              dataset: "$modelInfo.dataset",
+              description: "$modelInfo.description",
+              image: "$modelInfo.image",
+              purchased: "$modelInfo.purchased",
+              createdBy: "$modelInfo.createdBy",
+            }
+          }
+        },
+        { $sort: { purchasedAt: -1 } }
+      ])
+      .toArray();
+
+    res.json({ success: true, data: purchases });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
 });
+
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
