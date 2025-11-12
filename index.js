@@ -12,41 +12,58 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-const uri = process.env.MONGO_URI;
-const client = new MongoClient(uri, {
-  serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true },
-});
+// ---------------- MongoDB Setup ---------------- //
+const uri = `mongodb+srv://${process.env.DB_USERNAME}:${process.env.DB_PASSWORD}@cluster0.o1btdpz.mongodb.net/?appName=Cluster0`;
 
-// Connect to MongoDB
-async function run() {
-  try {
-    await client.connect();
-    console.log("✅ MongoDB connected!");
-  } catch (err) {
-    console.error("❌ MongoDB connection failed:", err);
-  }
+let cachedClient = null;
+let cachedDb = null;
+
+async function connectToMongo() {
+  if (cachedClient && cachedDb) return { client: cachedClient, db: cachedDb };
+
+  const client = new MongoClient(uri, {
+    serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true },
+  });
+
+  // await client.connect();
+  // await client.db("admin").command({ ping: 1 });
+  console.log("✅ MongoDB connected!");
+
+  const db = client.db("Assignment-10-db");
+  cachedClient = client;
+  cachedDb = db;
+
+  return { client, db };
 }
-run().catch(console.dir);
-
-const db = client.db("Assignment-10-db");
-const modelsCollection = db.collection("models");
-const purchasesCollection = db.collection("purchases");
 
 // ---------------- Routes ---------------- //
 
 // Root
-app.get("/", (req, res) => res.send("🚀 Backend running..."));
+app.get("/", async (req, res) => {
+  try {
+    await connectToMongo();
+    res.send("🚀 Backend running and DB connected!");
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("❌ Database connection failed!");
+  }
+});
 
 // Add Model
 app.post("/models", async (req, res) => {
   try {
-    const model = req.body;
-    model.createdAt = new Date();
-    model.purchased = 0;
-    model.createdBy = model.createdBy || "unknown@example.com";
-    model.ownerEmail = model.createdBy;
-    model.description = model.description || "No description available";
-    model.image = model.image || "https://via.placeholder.com/300x200?text=No+Image";
+    const { db } = await connectToMongo();
+    const modelsCollection = db.collection("models");
+
+    const model = {
+      ...req.body,
+      createdAt: new Date(),
+      purchased: 0,
+      createdBy: req.body.createdBy || "unknown@example.com",
+      ownerEmail: req.body.createdBy || "unknown@example.com",
+      description: req.body.description || "No description available",
+      image: req.body.image || "https://via.placeholder.com/300x200?text=No+Image",
+    };
 
     const result = await modelsCollection.insertOne(model);
     res.status(201).json({ success: true, data: result });
@@ -56,12 +73,16 @@ app.post("/models", async (req, res) => {
   }
 });
 
-// Get all models (optionally filter by user)
+// Get all models (optionally by user email)
 app.get("/models", async (req, res) => {
   try {
+    const { db } = await connectToMongo();
+    const modelsCollection = db.collection("models");
+
     const email = req.query.email;
     const query = email ? { createdBy: email } : {};
     const models = await modelsCollection.find(query).toArray();
+
     res.json({ success: true, data: models });
   } catch (err) {
     console.error(err);
@@ -72,11 +93,10 @@ app.get("/models", async (req, res) => {
 // Get latest 6 models
 app.get("/models/latest", async (req, res) => {
   try {
-    const models = await modelsCollection
-      .find({})
-      .sort({ createdAt: -1 })
-      .limit(6)
-      .toArray();
+    const { db } = await connectToMongo();
+    const modelsCollection = db.collection("models");
+
+    const models = await modelsCollection.find({}).sort({ createdAt: -1 }).limit(6).toArray();
     res.json({ success: true, data: models });
   } catch (err) {
     console.error(err);
@@ -87,9 +107,13 @@ app.get("/models/latest", async (req, res) => {
 // Get model by ID
 app.get("/models/:id", async (req, res) => {
   try {
+    const { db } = await connectToMongo();
+    const modelsCollection = db.collection("models");
+
     const id = req.params.id;
     const model = await modelsCollection.findOne({ _id: new ObjectId(id) });
     if (!model) return res.status(404).json({ success: false, message: "Model not found" });
+
     res.json({ success: true, data: model });
   } catch (err) {
     console.error(err);
@@ -100,9 +124,13 @@ app.get("/models/:id", async (req, res) => {
 // Update model
 app.put("/models/:id", async (req, res) => {
   try {
+    const { db } = await connectToMongo();
+    const modelsCollection = db.collection("models");
+
     const id = req.params.id;
     const update = { $set: req.body };
     const result = await modelsCollection.updateOne({ _id: new ObjectId(id) }, update);
+
     res.json({ success: true, data: result });
   } catch (err) {
     console.error(err);
@@ -111,23 +139,17 @@ app.put("/models/:id", async (req, res) => {
 });
 
 // Delete model
-app.delete("/models/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const result = await modelsCollection.deleteOne({ _id: new ObjectId(id) });
-    res.json({ success: true, data: result });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server Error" });
-  }
-});
+
 
 // Add a purchase
 app.post("/purchases", async (req, res) => {
   try {
-    const purchase = req.body;
-    purchase.purchasedAt = new Date();
+    const { db } = await connectToMongo();
+    const purchasesCollection = db.collection("purchases");
+
+    const purchase = { ...req.body, purchasedAt: new Date() };
     const result = await purchasesCollection.insertOne(purchase);
+
     res.json({ success: true, data: result });
   } catch (err) {
     console.error(err);
@@ -138,11 +160,12 @@ app.post("/purchases", async (req, res) => {
 // Increment purchased count
 app.post("/models/:id/purchase", async (req, res) => {
   try {
+    const { db } = await connectToMongo();
+    const modelsCollection = db.collection("models");
+
     const id = req.params.id;
-    const result = await modelsCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $inc: { purchased: 1 } }
-    );
+    const result = await modelsCollection.updateOne({ _id: new ObjectId(id) }, { $inc: { purchased: 1 } });
+
     res.json({ success: true, data: result });
   } catch (err) {
     console.error(err);
@@ -150,11 +173,14 @@ app.post("/models/:id/purchase", async (req, res) => {
   }
 });
 
-// Get purchases for a specific user with model details
+// Get all purchases for a user with model details
 app.get("/purchases", async (req, res) => {
   try {
     const email = req.query.email;
     if (!email) return res.status(400).json({ success: false, message: "Email is required" });
+
+    const { db } = await connectToMongo();
+    const purchasesCollection = db.collection("purchases");
 
     const purchases = await purchasesCollection
       .aggregate([
@@ -164,12 +190,10 @@ app.get("/purchases", async (req, res) => {
             from: "models",
             let: { modelIdStr: "$modelId" },
             pipeline: [
-              {
-                $match: { $expr: { $eq: ["$_id", { $toObjectId: "$$modelIdStr" }] } }
-              }
+              { $match: { $expr: { $eq: ["$_id", { $toObjectId: "$$modelIdStr" }] } } },
             ],
-            as: "modelInfo"
-          }
+            as: "modelInfo",
+          },
         },
         { $unwind: "$modelInfo" },
         {
@@ -178,20 +202,10 @@ app.get("/purchases", async (req, res) => {
             modelId: 1,
             userEmail: 1,
             purchasedAt: 1,
-            modelDetails: {
-              _id: "$modelInfo._id",
-              name: "$modelInfo.name",
-              framework: "$modelInfo.framework",
-              useCase: "$modelInfo.useCase",
-              dataset: "$modelInfo.dataset",
-              description: "$modelInfo.description",
-              image: "$modelInfo.image",
-              purchased: "$modelInfo.purchased",
-              createdBy: "$modelInfo.createdBy",
-            }
-          }
+            modelDetails: "$modelInfo",
+          },
         },
-        { $sort: { purchasedAt: -1 } }
+        { $sort: { purchasedAt: -1 } },
       ])
       .toArray();
 
@@ -202,4 +216,5 @@ app.get("/purchases", async (req, res) => {
   }
 });
 
+// ---------------- Start server ---------------- //
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
