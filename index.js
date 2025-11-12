@@ -139,7 +139,20 @@ app.put("/models/:id", async (req, res) => {
 });
 
 // Delete model
+app.delete("/models/:id", async (req, res) => {
+  try {
+    const { db } = await connectToMongo();
+    const modelsCollection = db.collection("models");
 
+    const id = req.params.id;
+    const result = await modelsCollection.deleteOne({ _id: new ObjectId(id) });
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+});
 
 // Add a purchase
 app.post("/purchases", async (req, res) => {
